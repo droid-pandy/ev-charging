@@ -20,7 +20,18 @@ def get_restaurant_menu(restaurant_name: str) -> list:
 @Tool
 def place_food_order(restaurant: str, items: list, pickup_time: str) -> dict:
     """Place a mobile order for food/drinks"""
-    total = sum([5.50 if 'coffee' in i.lower() or 'latte' in i.lower() else 8.00 for i in items])
+    total = 0
+    for item in items:
+        item_lower = item.lower()
+        if 'cappuccino' in item_lower:
+            total += 6.50
+        elif 'croissant' in item_lower:
+            total += 10.00
+        elif 'coffee' in item_lower or 'latte' in item_lower:
+            total += 5.50
+        else:
+            total += 8.00
+    
     return {
         "order_id": f"ORD-{int(datetime.now().timestamp())}",
         "restaurant": restaurant,
