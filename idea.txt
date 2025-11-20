@@ -1,0 +1,16 @@
+The "Proactive" EV Concierge (In-Vehicle Experience)
+Problem: EV owners suffer from "range anxiety" and broken chargers. Current navigation just shows locations; it doesn't ensure success. The Agentic Solution: An agent that manages the entire charging logistics lifecycle, not just navigation.
+
+What it does:
+
+Predicts: "I see you have a trip to LA tomorrow and only 40% charge."
+
+Negotiates: Connects to a charging network API to reserve a specific slot at a high-speed charger along the route.
+
+Orders: Pre-orders coffee/food at the charging station for the driver while they wait.
+
+Pays: Handles the transaction autonomously using a digital wallet.
+
+Why it wins: It pushes "Connected Mobility" to "Autonomous Mobility" (automating the tasks, not just the driving).
+
+Tech Stack: Amazon Bedrock (Claude 3.5 Sonnet), AgentCore to handle the multi-step "Booking" and "Payment" workflow.
