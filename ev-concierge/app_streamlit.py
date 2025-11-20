@@ -10,7 +10,7 @@ st.set_page_config(page_title="EV Concierge", page_icon="🚗", layout="wide")
 if 'coordinator' not in st.session_state:
     st.session_state.coordinator = CoordinatorAgent()
     st.session_state.vehicle = {"model": "Tesla Model Y", "battery_percent": 45, "range_miles": 300}
-    st.session_state.preferences = {"auto_order_coffee": True, "favorite_drink": "Large Latte", "wallet_id": "WALLET-12345"}
+    st.session_state.preferences = {"auto_order_coffee": True, "favorite_drink": "Large Latte", "favorite_food": "Breakfast Sandwich", "wallet_id": "WALLET-12345"}
     st.session_state.agent_status = {}
     st.session_state.trip_active = False
     st.session_state.notifications = []
@@ -246,13 +246,17 @@ with col2:
     
     with st.expander("Edit Preferences"):
         auto_order = st.checkbox("Auto-order coffee/food", value=st.session_state.preferences['auto_order_coffee'])
-        favorite_drink = st.text_input("Favorite Drink", value=st.session_state.preferences['favorite_drink'])
+        favorite_drink = st.selectbox("Favorite Drink", ["Large Latte", "Cappuccino", "Coffee"], 
+                                      index=["Large Latte", "Cappuccino", "Coffee"].index(st.session_state.preferences.get('favorite_drink', 'Large Latte')))
+        favorite_food = st.selectbox("Favorite Food", ["Breakfast Sandwich", "Croissant", "Cookies", "None"], 
+                                     index=["Breakfast Sandwich", "Croissant", "Cookies", "None"].index(st.session_state.preferences.get('favorite_food', 'Breakfast Sandwich')))
         wallet_id = st.text_input("Wallet ID", value=st.session_state.preferences['wallet_id'])
         
         if st.button("Save Preferences"):
             st.session_state.preferences = {
                 "auto_order_coffee": auto_order,
                 "favorite_drink": favorite_drink,
+                "favorite_food": favorite_food,
                 "wallet_id": wallet_id
             }
             st.success("Preferences saved!")

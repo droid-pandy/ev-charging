@@ -16,12 +16,18 @@ class AmenitiesAgent:
         system_prompt = """You are an amenities specialist. Check what's available and 
 pre-order based on user preferences and charging duration."""
         
+        favorite_drink = user_prefs.get('favorite_drink', 'Coffee')
+        favorite_food = user_prefs.get('favorite_food', '')
+        
         user_prompt = f"""
 Location: {location}
 Charging Duration: {charging_duration_min} minutes
-User Preferences: Favorite drink: {user_prefs.get('favorite_drink', 'Coffee')}
-
-Check amenities and pre-order appropriate items."""
+User Preferences: Favorite drink: {favorite_drink}"""
+        
+        if favorite_food and favorite_food != 'None':
+            user_prompt += f", Favorite food: {favorite_food}"
+        
+        user_prompt += "\n\nCheck amenities and pre-order appropriate items."
         
         response = self.strands.run(
             system_prompt=system_prompt,
