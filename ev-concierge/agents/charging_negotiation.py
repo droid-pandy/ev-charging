@@ -1,15 +1,23 @@
-from strands import Strands
+from strands.models import BedrockModel
+from strands import Agent
 from utils.config import AWS_REGION, BEDROCK_MODEL_ID
 from tools.charging_tools import search_chargers, reserve_charging_slot, check_charger_status
+import json
+import asyncio
 
 class ChargingNegotiationAgent:
     def __init__(self):
-        self.strands = Strands(
+        self.model = BedrockModel(
             model_id=BEDROCK_MODEL_ID,
-            region=AWS_REGION
+            region_name=AWS_REGION,
+            temperature=0.7
         )
     
     def find_and_reserve(self, trip_plan: dict, preferences: dict = None) -> dict:
+        """Synchronous wrapper for async find_and_reserve"""
+        return asyncio.run(self.find_and_reserve_async(trip_plan, preferences))
+    
+    async def find_and_reserve_async(self, trip_plan: dict, preferences: dict = None) -> dict:
         system_prompt = """You are a charging negotiation specialist. Find the best charger 
 based on price, speed, location, and availability. Reserve the optimal slot."""
         
@@ -19,14 +27,40 @@ User Preferences: {preferences or 'Prioritize speed and convenience'}
 
 Find and reserve the best charging option."""
         
-        response = self.strands.run(
+        agent = Agent(
+            model=self.model,
             system_prompt=system_prompt,
-            user_prompt=user_prompt,
-            tools=[search_chargers, reserve_charging_slot, check_charger_status],
-            max_iterations=5
+            tools=[search_chargers, reserve_charging_slot, check_charger_status]
         )
         
+        response_text = ""
+        tool_results = []
+        
+        try:
+            async for event in agent.stream_async(user_prompt):
+                if isinstance(event, dict):
+                    if 'data' in event:
+                        response_text += str(event['data'])
+                    
+                    # Extract tool results from message
+                    if 'message' in event:
+                        message = event['message']
+                        if isinstance(message, dict) and 'content' in message:
+                            for content_block in message['content']:
+                                if isinstance(content_block, dict) and 'toolResult' in content_block:
+                                    tool_result = content_block['toolResult']
+                                    if 'content' in tool_result:
+                                        for content_item in tool_result['content']:
+                                            if 'text' in content_item:
+                                                try:
+                                                    result_json = json.loads(content_item['text'])
+                                                    tool_results.append(result_json)
+                                                except:
+                                                    pass
+        except Exception as e:
+            response_text = f"Error: {str(e)}"
+        
         return {
-            "reservation": response.final_response,
-            "tool_results": [c.result for c in response.tool_calls] if response.tool_calls else []
+            "reservation": response_text,
+            "tool_results": tool_results
         }

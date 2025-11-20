@@ -1,27 +1,32 @@
 from datetime import datetime
-from strands import Tool
+from strands.tools import tool
 from utils.config import USE_MOCK_DATA
 from utils.mock_data import get_mock_amenities, get_mock_menu
+import json
 
-@Tool
-def check_nearby_amenities(location: str) -> dict:
+@tool
+def check_nearby_amenities(location: str) -> str:
     """Check available restaurants and facilities near charging location"""
     if USE_MOCK_DATA:
-        return get_mock_amenities(location)
-    return {}
+        result = get_mock_amenities(location)
+    else:
+        result = {}
+    return json.dumps(result)
 
-@Tool
-def get_restaurant_menu(restaurant_name: str) -> list:
+@tool
+def get_restaurant_menu(restaurant_name: str) -> str:
     """Get menu items from a restaurant"""
     if USE_MOCK_DATA:
-        return get_mock_menu(restaurant_name)
-    return []
+        result = get_mock_menu(restaurant_name)
+    else:
+        result = []
+    return json.dumps(result)
 
-@Tool
-def place_food_order(restaurant: str, items: list, pickup_time: str) -> dict:
+@tool
+def place_food_order(restaurant: str, items: list, pickup_time: str) -> str:
     """Place a mobile order for food/drinks"""
     total = sum([5.50 if 'coffee' in i.lower() or 'latte' in i.lower() else 8.00 for i in items])
-    return {
+    result = {
         "order_id": f"ORD-{int(datetime.now().timestamp())}",
         "restaurant": restaurant,
         "items": items,
@@ -29,3 +34,4 @@ def place_food_order(restaurant: str, items: list, pickup_time: str) -> dict:
         "pickup_time": pickup_time,
         "status": "confirmed"
     }
+    return json.dumps(result)

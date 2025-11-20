@@ -14,12 +14,7 @@ class CoordinatorAgent:
         self.payment_agent = PaymentAgent()
         self.monitoring_agent = MonitoringAgent()
         
-        # Import here to avoid circular dependency
-        from strands import Strands
-        self.strands = Strands(
-            model_id=BEDROCK_MODEL_ID,
-            region=AWS_REGION
-        )
+        # Coordinator doesn't need its own agent - it orchestrates other agents
     
     def orchestrate(self, vehicle_data: dict, trip_data: dict, user_prefs: dict) -> dict:
         results = {}
