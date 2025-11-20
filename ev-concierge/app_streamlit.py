@@ -73,11 +73,10 @@ with col1:
         result_placeholder = st.empty()
         
         try:
-            # Update agent statuses
-            for idx, agent in enumerate(agent_names):
-                st.session_state.agent_status[agent].warning("🔄 Working...")
-                progress_bar.progress((idx + 1) / len(agent_names))
-                time.sleep(0.3)
+            # Step 1: Trip Planning
+            st.session_state.agent_status["Trip Planning"].warning("🔄 Analyzing energy needs...")
+            progress_bar.progress(0.2)
+            time.sleep(0.2)
             
             # Run coordinator
             result = st.session_state.coordinator.orchestrate(
@@ -86,36 +85,102 @@ with col1:
                 st.session_state.preferences
             )
             
-            # Mark agents complete
-            for agent in agent_names:
-                st.session_state.agent_status[agent].success("✅ Complete")
+            st.session_state.agent_status["Trip Planning"].success("✅ Complete")
+            progress_bar.progress(0.3)
             
-            progress_bar.progress(100)
+            # Check if charging needed
+            needs_charging = 'charging' in result.get('results', {})
             
-            # Display results
-            result_placeholder.success(f"### ✅ Trip Planned Successfully\n\n{result['summary']}")
+            if needs_charging:
+                # Step 2: Charging
+                st.session_state.agent_status["Charging"].warning("🔄 Finding chargers...")
+                progress_bar.progress(0.5)
+                time.sleep(0.2)
+                st.session_state.agent_status["Charging"].success("✅ Complete")
+                
+                # Step 3: Amenities
+                st.session_state.agent_status["Amenities"].warning("🔄 Ordering food...")
+                progress_bar.progress(0.7)
+                time.sleep(0.2)
+                st.session_state.agent_status["Amenities"].success("✅ Complete")
+                
+                # Step 4: Payment
+                st.session_state.agent_status["Payment"].warning("🔄 Processing payment...")
+                progress_bar.progress(0.9)
+                time.sleep(0.2)
+                st.session_state.agent_status["Payment"].success("✅ Complete")
+            else:
+                # Mark unused agents as skipped
+                st.session_state.agent_status["Charging"].info("⏭️ Skipped")
+                st.session_state.agent_status["Amenities"].info("⏭️ Skipped")
+                st.session_state.agent_status["Payment"].info("⏭️ Skipped")
             
-            # Add notifications
+            # Coordinator and Monitoring always run
+            st.session_state.agent_status["Coordinator"].success("✅ Complete")
+            st.session_state.agent_status["Monitoring"].success("✅ Complete")
+            progress_bar.progress(1.0)
+            
+            # Display results with better formatting
+            if needs_charging:
+                result_placeholder.success(f"### ✅ Trip Planned Successfully\n\n{result['summary']}")
+            else:
+                result_placeholder.info(f"### ✅ Trip Planned\n\n{result['summary']}")
+            
+            # Add detailed notifications
             st.session_state.notifications.append({
                 "time": datetime.now().strftime("%H:%M"),
                 "message": f"Trip to {destination} planned",
                 "type": "success"
             })
             
-            if 'results' in result and 'charging' in result['results']:
-                charging_tools = result['results']['charging'].get('tool_results', [])
-                for tool_result in charging_tools:
-                    if isinstance(tool_result, dict) and 'reservation_id' in tool_result:
-                        st.session_state.notifications.append({
-                            "time": datetime.now().strftime("%H:%M"),
-                            "message": f"Charger reserved: {tool_result['reservation_id']}",
-                            "type": "info"
-                        })
+            # Parse and add specific notifications
+            if 'results' in result:
+                # Energy analysis
+                if 'trip_plan' in result['results']:
+                    trip_tools = result['results']['trip_plan'].get('tool_results', [])
+                    for tool_result in trip_tools:
+                        if isinstance(tool_result, dict) and 'needs_charging' in tool_result:
+                            if tool_result['needs_charging']:
+                                deficit = tool_result.get('deficit_percent', 0)
+                                st.session_state.notifications.append({
+                                    "time": datetime.now().strftime("%H:%M"),
+                                    "message": f"⚡ Charging needed: {deficit}% deficit",
+                                    "type": "warning"
+                                })
+                
+                # Charging reservations
+                if 'charging' in result['results']:
+                    charging_tools = result['results']['charging'].get('tool_results', [])
+                    for tool_result in charging_tools:
+                        if isinstance(tool_result, dict) and 'reservation_id' in tool_result:
+                            location = tool_result.get('location', 'Unknown')
+                            st.session_state.notifications.append({
+                                "time": datetime.now().strftime("%H:%M"),
+                                "message": f"🔌 Reserved charger at {location}",
+                                "type": "info"
+                            })
+                
+                # Food orders
+                if 'amenities' in result['results']:
+                    amenities_tools = result['results']['amenities'].get('tool_results', [])
+                    for tool_result in amenities_tools:
+                        if isinstance(tool_result, dict) and 'order_id' in tool_result:
+                            restaurant = tool_result.get('restaurant', 'Restaurant')
+                            st.session_state.notifications.append({
+                                "time": datetime.now().strftime("%H:%M"),
+                                "message": f"🍽️ Pre-ordered from {restaurant}",
+                                "type": "info"
+                            })
             
         except Exception as e:
             result_placeholder.error(f"❌ Error: {str(e)}")
+            import traceback
+            error_details = traceback.format_exc()
+            with st.expander("Error Details"):
+                st.code(error_details)
             for agent in agent_names:
-                st.session_state.agent_status[agent].error("❌ Failed")
+                if st.session_state.agent_status[agent]:
+                    st.session_state.agent_status[agent].error("❌ Failed")
 
 with col2:
     st.markdown("### ⚙️ Vehicle Status")

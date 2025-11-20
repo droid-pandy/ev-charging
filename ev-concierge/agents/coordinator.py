@@ -13,6 +13,13 @@ class CoordinatorAgent:
         self.amenities_agent = AmenitiesAgent()
         self.payment_agent = PaymentAgent()
         self.monitoring_agent = MonitoringAgent()
+        
+        # Import here to avoid circular dependency
+        from strands import Strands
+        self.strands = Strands(
+            model_id=BEDROCK_MODEL_ID,
+            region=AWS_REGION
+        )
     
     def orchestrate(self, vehicle_data: dict, trip_data: dict, user_prefs: dict) -> dict:
         results = {}
@@ -21,14 +28,25 @@ class CoordinatorAgent:
         trip_plan = self.trip_agent.analyze(vehicle_data, trip_data)
         results['trip_plan'] = trip_plan
         
-        # Check if charging needed
-        needs_charging = any('needs_charging' in str(r) and 'true' in str(r).lower() 
-                            for r in trip_plan.get('tool_results', []))
+        # Check if charging needed by parsing actual tool results
+        needs_charging = False
+        energy_result = None
+        
+        for tool_result in trip_plan.get('tool_results', []):
+            if isinstance(tool_result, dict):
+                # Check if this is the energy calculation result
+                if 'needs_charging' in tool_result:
+                    needs_charging = tool_result.get('needs_charging', False)
+                    energy_result = tool_result
+                    break
         
         if not needs_charging:
+            battery_pct = vehicle_data.get('battery_percent', 0)
+            range_mi = vehicle_data.get('range_miles', 0)
             return {
-                "summary": "✅ No charging needed for this trip. You have sufficient range!",
-                "results": results
+                "summary": f"✅ No charging needed! Your {battery_pct}% battery ({range_mi} mi range) is sufficient for this trip.",
+                "results": results,
+                "energy_analysis": energy_result
             }
         
         # Step 2: Charging Negotiation
@@ -75,23 +93,66 @@ class CoordinatorAgent:
         }
     
     def _generate_summary(self, results: dict) -> str:
-        system_prompt = """You are the coordinator. Create a concise, friendly summary 
-for the driver with all key information: charging location, time, amenities ordered, 
-and total cost."""
+        """Generate a comprehensive summary of the trip plan"""
         
-        user_prompt = f"""
-Trip Plan: {results.get('trip_plan', {}).get('analysis', '')}
-Charging: {results.get('charging', {}).get('reservation', '')}
-Amenities: {results.get('amenities', {}).get('order', '')}
-Payments: {results.get('payments', {}).get('payments', '')}
-
-Create a clear summary notification for the driver."""
+        summary_parts = []
         
-        response = self.strands.run(
-            system_prompt=system_prompt,
-            user_prompt=user_prompt,
-            tools=[],
-            max_iterations=1
-        )
+        # Trip analysis
+        trip_analysis = results.get('trip_plan', {}).get('analysis', '')
+        if trip_analysis:
+            summary_parts.append(f"**Trip Analysis:**\n{trip_analysis}")
         
-        return response.final_response
+        # Charging details
+        charging_tools = results.get('charging', {}).get('tool_results', [])
+        if charging_tools:
+            summary_parts.append("\n**⚡ Charging Plan:**")
+            for tool_result in charging_tools:
+                if isinstance(tool_result, dict):
+                    if 'reservation_id' in tool_result:
+                        location = tool_result.get('location', 'Unknown')
+                        time_slot = tool_result.get('time_slot', 'TBD')
+                        duration = tool_result.get('duration_min', 30)
+                        summary_parts.append(f"- Reserved at {location}")
+                        summary_parts.append(f"  Time: {time_slot}, Duration: {duration} min")
+                        summary_parts.append(f"  Confirmation: `{tool_result['reservation_id']}`")
+                    elif isinstance(tool_result, list):
+                        # Charger search results
+                        summary_parts.append(f"- Found {len(tool_result)} available chargers")
+        
+        # Amenities
+        amenities_tools = results.get('amenities', {}).get('tool_results', [])
+        if amenities_tools:
+            summary_parts.append("\n**🍽️ Amenities:**")
+            for tool_result in amenities_tools:
+                if isinstance(tool_result, dict):
+                    if 'order_id' in tool_result:
+                        restaurant = tool_result.get('restaurant', 'Restaurant')
+                        items = tool_result.get('items', [])
+                        total = tool_result.get('total_usd', 0)
+                        pickup_time = tool_result.get('pickup_time', 'TBD')
+                        summary_parts.append(f"- Pre-ordered from {restaurant}")
+                        summary_parts.append(f"  Items: {', '.join(items)}")
+                        summary_parts.append(f"  Total: ${total:.2f}")
+                        summary_parts.append(f"  Pickup: {pickup_time}")
+                        summary_parts.append(f"  Order: `{tool_result['order_id']}`")
+        
+        # Payments
+        payment_tools = results.get('payments', {}).get('tool_results', [])
+        if payment_tools:
+            total_paid = 0
+            summary_parts.append("\n**💳 Payments:**")
+            for tool_result in payment_tools:
+                if isinstance(tool_result, dict) and 'transaction_id' in tool_result:
+                    amount = tool_result.get('amount', 0)
+                    merchant = tool_result.get('merchant', 'Merchant')
+                    total_paid += amount
+                    summary_parts.append(f"- ${amount:.2f} to {merchant}")
+            
+            if total_paid > 0:
+                summary_parts.append(f"\n**Total Charged: ${total_paid:.2f}**")
+        
+        # Combine all parts
+        if summary_parts:
+            return "\n".join(summary_parts)
+        else:
+            return "✅ Trip planned successfully!"
