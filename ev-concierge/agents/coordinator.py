@@ -66,17 +66,48 @@ class CoordinatorAgent:
         
         # Step 2: Charging Negotiation
         print("⚡ STEP 2: Charging Negotiation Agent...")
-        charging_result = self.charging_agent.find_and_reserve(trip_plan, user_prefs)
-        print("✅ Charging negotiation complete\n")
+        print(f"   Origin: {trip_data['origin']}")
+        print(f"   Destination: {trip_data['destination']}")
+        print(f"   Current range: {int((vehicle_data['battery_percent']/100) * vehicle_data['range_miles'])} miles")
+        # Pass trip_data with vehicle_data embedded for range calculation
+        trip_data_with_vehicle = {**trip_data, 'vehicle_data': vehicle_data}
+        charging_result = self.charging_agent.find_and_reserve(trip_data_with_vehicle, user_prefs)
+        print("✅ Charging negotiation complete")
+        print(f"   Tool results: {len(charging_result.get('tool_results', []))} results\n")
         results['charging'] = charging_result
         
-        # Check if charging was successful
+        # Check if charging was successful or if there's an insufficient range error
         charging_successful = False
+        insufficient_range = False
         charger_location = "charging location"
         charging_duration = 30
+        insufficient_range_message = ""
+        recommended_stations = []
+        
+        # Check the agent's response text for insufficient range
+        agent_response = charging_result.get('reservation', '')
+        if 'insufficient' in agent_response.lower() or 'charge at home' in agent_response.lower():
+            insufficient_range = True
+            insufficient_range_message = agent_response
         
         for r in charging_result.get('tool_results', []):
             if isinstance(r, dict):
+                # Debug: print what we got
+                if 'error' in r:
+                    print(f"   DEBUG: Found error in tool result: {r.get('error')}")
+                    print(f"   DEBUG: Has stations_if_fully_charged: {'stations_if_fully_charged' in r}")
+                    if 'stations_if_fully_charged' in r:
+                        print(f"   DEBUG: Number of recommended stations: {len(r['stations_if_fully_charged'])}")
+                
+                # Check for insufficient range error in tool results
+                if 'error' in r and r['error'] == 'insufficient_range':
+                    insufficient_range = True
+                    if not insufficient_range_message:
+                        insufficient_range_message = r.get('message', 'Insufficient battery range')
+                    if 'stations_if_fully_charged' in r:
+                        recommended_stations = r['stations_if_fully_charged']
+                        print(f"   DEBUG: Extracted {len(recommended_stations)} recommended stations")
+                    
                 if 'reservation_id' in r:
                     charging_successful = True
                 if 'location' in r:
@@ -84,7 +115,91 @@ class CoordinatorAgent:
                 if 'duration_min' in r:
                     charging_duration = r['duration_min']
         
-        # If charging failed, return early with error message
+        # If insufficient range, still plan the trip assuming they charge at home first
+        if insufficient_range:
+            print("\n⚠️  Insufficient Battery Range")
+            print(f"   {insufficient_range_message[:200]}")
+            print("   Recommendation: Charge to 100% at home before departure")
+            
+            # If we don't have recommended stations, query for them now
+            if not recommended_stations:
+                print("   Querying for stations with full battery...")
+                from tools.charging_tools import search_chargers
+                import json
+                full_battery_result = search_chargers(
+                    trip_data['origin'],
+                    trip_data['destination'],
+                    min_power_kw=150,
+                    current_range_miles=300  # Full battery
+                )
+                full_battery_data = json.loads(full_battery_result)
+                if isinstance(full_battery_data, list):
+                    recommended_stations = full_battery_data[:3]
+                elif isinstance(full_battery_data, dict) and 'stations_if_fully_charged' in full_battery_data:
+                    recommended_stations = full_battery_data['stations_if_fully_charged'][:3]
+                print(f"   Found {len(recommended_stations)} stations for full battery")
+            
+            # If we have recommended stations, use the first one for amenities planning
+            if recommended_stations and len(recommended_stations) > 0:
+                first_station = recommended_stations[0]
+                charger_location = first_station.get('location', 'charging location')
+                print(f"   Planning amenities at first stop: {charger_location}\n")
+                
+                # Step 3: Amenities at the first charging stop
+                print("🍽️  STEP 3: Amenities Agent...")
+                amenities_result = self.amenities_agent.order_amenities(
+                    charger_location, user_prefs, charging_duration
+                )
+                print("✅ Amenities complete\n")
+                results['amenities'] = amenities_result
+                
+                # Step 4: Payment
+                print("💳 STEP 4: Payment Agent...")
+                transactions = []
+                for r in amenities_result.get('tool_results', []):
+                    if isinstance(r, dict) and 'total_usd' in r:
+                        transactions.append({
+                            "amount": r['total_usd'],
+                            "merchant": r.get('restaurant', 'Food vendor'),
+                            "description": f"Pre-order: {', '.join(r.get('items', []))}"
+                        })
+                
+                if transactions:
+                    payment_result = self.payment_agent.process_payments(
+                        transactions, user_prefs.get('wallet_id', 'default')
+                    )
+                    print("✅ Payment complete\n")
+                    results['payments'] = payment_result
+                
+                # Generate summary with insufficient range warning + planned amenities
+                summary = self._generate_summary_with_insufficient_range(
+                    results, 
+                    insufficient_range_message,
+                    recommended_stations
+                )
+                
+                return {
+                    "summary": summary,
+                    "results": results,
+                    "insufficient_range": True
+                }
+            else:
+                # No stations available even with full charge
+                print("   No stations found even with full charge\n")
+                
+                summary_parts = [
+                    "⚠️ **Insufficient Battery Range**\n",
+                    insufficient_range_message[:500],
+                    "\n\n**Recommendation:** Charge to 100% at home before starting your trip."
+                ]
+                
+                return {
+                    "summary": "".join(summary_parts),
+                    "results": results,
+                    "insufficient_range": True
+                }
+        
+        # If charging failed for other reasons, continue with amenities
         if not charging_successful:
             print("\n⚠️  WARNING: Charging reservation failed!")
             print("   No chargers were found or reserved.")
@@ -219,6 +334,51 @@ class CoordinatorAgent:
             "summary": summary,
             "results": results
         }
+    
+    def _generate_summary_with_insufficient_range(self, results: dict, message: str, recommended_stations: list) -> str:
+        """Generate summary when battery is insufficient but we plan amenities anyway"""
+        
+        summary_parts = []
+        
+        # Warning about insufficient range
+        summary_parts.append("⚠️ **Insufficient Battery Range**\n")
+        summary_parts.append(f"{message[:300]}\n")
+        summary_parts.append("\n**🔌 Action Required:** Charge to 100% at home before departure\n")
+        
+        # Show first charging stop
+        if recommended_stations:
+            first_station = recommended_stations[0]
+            summary_parts.append(f"\n**📍 Your First Charging Stop (after home charge):**")
+            summary_parts.append(f"\n- **{first_station.get('network')}** at {first_station.get('location')}")
+            summary_parts.append(f"\n  Power: {first_station.get('power_kw')} kW")
+            summary_parts.append(f"\n  Address: {first_station.get('address', 'N/A')}")
+        
+        # Amenities
+        amenities_tools = results.get('amenities', {}).get('tool_results', [])
+        if amenities_tools:
+            summary_parts.append("\n\n**🍽️ Pre-ordered Amenities:**")
+            for tool_result in amenities_tools:
+                if isinstance(tool_result, dict):
+                    if 'order_id' in tool_result:
+                        restaurant = tool_result.get('restaurant', 'Restaurant')
+                        items = tool_result.get('items', [])
+                        total = tool_result.get('total_usd', 0)
+                        pickup_time = tool_result.get('pickup_time', 'TBD')
+                        summary_parts.append(f"\n- {restaurant}: {', '.join(items)}")
+                        summary_parts.append(f"\n  Total: ${total:.2f} | Pickup: {pickup_time}")
+        
+        # Payments
+        payment_tools = results.get('payments', {}).get('tool_results', [])
+        if payment_tools:
+            total_paid = 0
+            for tool_result in payment_tools:
+                if isinstance(tool_result, dict) and 'transaction_id' in tool_result:
+                    total_paid += tool_result.get('amount', 0)
+            
+            if total_paid > 0:
+                summary_parts.append(f"\n\n**💳 Total Charged: ${total_paid:.2f}**")
+        
+        return "\n".join(summary_parts)
     
     def _generate_summary(self, results: dict) -> str:
         """Generate a comprehensive summary of the trip plan"""

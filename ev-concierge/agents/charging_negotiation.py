@@ -13,27 +13,55 @@ class ChargingNegotiationAgent:
             temperature=0.7
         )
     
-    def find_and_reserve(self, trip_plan: dict, preferences: dict = None) -> dict:
+    def find_and_reserve(self, trip_data: dict, preferences: dict = None) -> dict:
         """Synchronous wrapper for async find_and_reserve"""
-        return asyncio.run(self.find_and_reserve_async(trip_plan, preferences))
+        return asyncio.run(self.find_and_reserve_async(trip_data, preferences))
     
-    async def find_and_reserve_async(self, trip_plan: dict, preferences: dict = None) -> dict:
+    async def find_and_reserve_async(self, trip_data: dict, preferences: dict = None) -> dict:
+        origin = trip_data.get('origin', 'Unknown')
+        destination = trip_data.get('destination', 'Unknown')
+        
+        # Extract vehicle data for range calculation
+        vehicle_data = trip_data.get('vehicle_data', {})
+        battery_percent = vehicle_data.get('battery_percent', 100)
+        vehicle_range = vehicle_data.get('range_miles', 300)
+        current_range = int((battery_percent / 100) * vehicle_range)
+        
         system_prompt = """You are a charging negotiation specialist. Find the best charger 
 based on price, speed, location, and availability. Reserve the optimal slot.
 
-IMPORTANT: When calling reserve_charging_slot, you MUST include:
-- charger_id: from the search results
-- time_slot: pick from available slots
-- location: the location field from the charger
-- network: the network field from the charger (e.g., "Tesla Supercharger", "EVgo")
+IMPORTANT: 
+1. Call search_chargers with the ORIGIN, DESTINATION, and CURRENT_RANGE_MILES
+2. The system will only return stations you can actually reach with your current battery
+3. If the response contains an "error" field with "insufficient_range":
+   - DO NOT try to reserve a station
+   - Inform the user they need to charge at home first
+   - Show them which stations they could reach if fully charged (from "stations_if_fully_charged")
+   - Recommend charging to 100% before departure
+4. If stations are found, reserve the best one and include:
+   - charger_id: from the search results
+   - time_slot: pick from available slots
+   - location: the location field from the charger
+   - network: the network field from the charger (e.g., "Tesla Supercharger", "EVgo")
 
-Example: reserve_charging_slot(charger_id="OCM-12345", time_slot="10:00", location="Kettleman City, CA", network="Tesla Supercharger")"""
+Example responses:
+- If insufficient range: "⚠️ Your current battery (35%, 105 miles) cannot reach any charging stations on this route. Please charge to 100% at home before departure. Once fully charged, your first stop would be: Tesla Supercharger at Lost Hills, CA (134 miles away)."
+- If stations found: search_chargers() then reserve_charging_slot(charger_id="OCM-12345", time_slot="10:00", location="Kettleman City, CA", network="Tesla Supercharger")"""
         
         user_prompt = f"""
-Trip Plan: {trip_plan}
+Trip: {origin} → {destination}
+Current Battery: {battery_percent}% ({current_range} miles range)
 User Preferences: {preferences or 'Prioritize speed and convenience'}
 
-Find and reserve the best charging option. Make sure to pass the network and location when reserving."""
+CRITICAL: First call search_chargers(route="{origin}", destination="{destination}", min_power_kw=150, current_range_miles={current_range})
+
+If the response contains "error": "insufficient_range":
+- DO NOT attempt to reserve
+- Explain to the user they need to charge at home first
+- Mention the stations they could reach if fully charged
+
+If stations are found:
+- Reserve the best one with all required parameters (charger_id, time_slot, location, network)"""
         
         agent = Agent(
             model=self.model,

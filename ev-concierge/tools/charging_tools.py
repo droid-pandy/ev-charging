@@ -7,8 +7,18 @@ from utils.openchargemap_client import get_chargers_along_route
 import json
 
 @tool
-def search_chargers(route: str, destination: str, min_power_kw: int = 150) -> str:
-    """Search for available EV chargers along route"""
+def search_chargers(route: str, destination: str, min_power_kw: int = 150, current_range_miles: int = 300) -> str:
+    """Search for available EV chargers along route.
+    
+    Args:
+        route: Starting location (e.g., "Los Angeles, CA")
+        destination: Ending location (e.g., "San Francisco, CA")
+        min_power_kw: Minimum power rating filter (default 150)
+        current_range_miles: Current vehicle range in miles (default 300)
+    
+    Returns:
+        JSON list of charging stations within range
+    """
     if USE_MOCK_DATA:
         result = get_mock_chargers(route, destination)
     else:
@@ -18,20 +28,42 @@ def search_chargers(route: str, destination: str, min_power_kw: int = 150) -> st
         
         if not origin_coords or not dest_coords:
             print(f"⚠️  Could not find coordinates for {route} or {destination}")
-            result = get_mock_chargers(route, destination)
+            result = {
+                "error": "invalid_location",
+                "message": f"Could not find coordinates for {route} or {destination}",
+                "stations": []
+            }
         else:
-            # Query OpenChargeMap API
+            # Query OpenChargeMap API with reachability filter
             result = get_chargers_along_route(
                 origin_coords,
                 dest_coords,
                 min_power_kw=min_power_kw,
-                max_results=10
+                max_results=10,
+                current_range_miles=current_range_miles
             )
             
-            # Fallback to mock if no results
+            # If no reachable stations, provide guidance
             if not result:
-                print("⚠️  No stations found from API, using mock data")
-                result = get_mock_chargers(route, destination)
+                print("⚠️  No reachable stations found with current battery level")
+                
+                # Find stations if they had full battery
+                full_range_stations = get_chargers_along_route(
+                    origin_coords,
+                    dest_coords,
+                    min_power_kw=min_power_kw,
+                    max_results=5,
+                    current_range_miles=300  # Assume full range
+                )
+                
+                result = {
+                    "error": "insufficient_range",
+                    "message": f"No charging stations reachable with current range ({current_range_miles} miles). Please charge at home before starting your trip.",
+                    "current_range_miles": current_range_miles,
+                    "recommended_action": "Charge to 100% at home before departure",
+                    "stations_if_fully_charged": full_range_stations[:3] if full_range_stations else [],
+                    "stations": []
+                }
     
     return json.dumps(result)
 

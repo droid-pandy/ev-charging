@@ -60,3 +60,49 @@ def calculate_distance_km(coord1: tuple[float, float], coord2: tuple[float, floa
     lon_diff_km = (lon2 - lon1) * 111 * math.cos(math.radians(avg_lat))
     
     return math.sqrt(lat_diff_km**2 + lon_diff_km**2)
+
+def distance_from_line(point: tuple[float, float], line_start: tuple[float, float], line_end: tuple[float, float]) -> float:
+    """
+    Calculate perpendicular distance from a point to a line segment in kilometers.
+    This helps filter stations that are off the route.
+    
+    Args:
+        point: Point coordinates (lat, lon)
+        line_start: Start of line (lat, lon)
+        line_end: End of line (lat, lon)
+    
+    Returns:
+        Distance in kilometers
+    """
+    import math
+    
+    # Convert to approximate km coordinates
+    lat, lon = point
+    lat1, lon1 = line_start
+    lat2, lon2 = line_end
+    
+    # Use average latitude for longitude scaling
+    avg_lat = (lat1 + lat2) / 2
+    lon_scale = math.cos(math.radians(avg_lat))
+    
+    # Convert to km
+    px, py = lon * 111 * lon_scale, lat * 111
+    x1, y1 = lon1 * 111 * lon_scale, lat1 * 111
+    x2, y2 = lon2 * 111 * lon_scale, lat2 * 111
+    
+    # Calculate perpendicular distance to line
+    line_len_sq = (x2 - x1)**2 + (y2 - y1)**2
+    
+    if line_len_sq == 0:
+        # Line start and end are the same point
+        return math.sqrt((px - x1)**2 + (py - y1)**2)
+    
+    # Project point onto line
+    t = max(0, min(1, ((px - x1) * (x2 - x1) + (py - y1) * (y2 - y1)) / line_len_sq))
+    
+    # Find closest point on line
+    closest_x = x1 + t * (x2 - x1)
+    closest_y = y1 + t * (y2 - y1)
+    
+    # Distance from point to closest point on line
+    return math.sqrt((px - closest_x)**2 + (py - closest_y)**2)

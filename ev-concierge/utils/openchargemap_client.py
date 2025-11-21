@@ -6,7 +6,7 @@ import requests
 import os
 from typing import Optional
 from dotenv import load_dotenv
-from utils.location_coords import calculate_midpoint, calculate_distance_km
+from utils.location_coords import calculate_midpoint, calculate_distance_km, distance_from_line
 
 # Load environment variables
 load_dotenv()
@@ -159,7 +159,8 @@ def get_chargers_along_route(
     destination_coords: tuple[float, float],
     min_power_kw: int = 50,
     max_results: int = 10,
-    distance_km: int = 50
+    distance_km: int = 50,
+    current_range_miles: int = 300
 ) -> list[dict]:
     """
     Query OpenChargeMap for charging stations along a route.
@@ -170,9 +171,10 @@ def get_chargers_along_route(
         min_power_kw: Minimum power rating filter
         max_results: Maximum number of results to return
         distance_km: Search radius from route midpoint in kilometers
+        current_range_miles: Current vehicle range in miles (for reachability filter)
     
     Returns:
-        List of charging station dictionaries
+        List of charging station dictionaries (only reachable stations)
     """
     api_key = os.getenv('OPENCHARGEMAP_API_KEY', '')
     
@@ -216,18 +218,51 @@ def get_chargers_along_route(
         # Parse response
         stations = parse_openchargemap_response(data)
         
-        # Sort by distance from origin
+        # Convert current range to km (with 20% safety buffer)
+        current_range_km = (current_range_miles * 1.60934) * 0.8  # 80% of range for safety
+        
+        # Filter stations by:
+        # 1. Distance from route line (not too far off route)
+        # 2. Reachability (within current battery range from origin)
+        max_deviation_km = 150  # 150km from the route line (allows for reasonable detours)
+        
+        filtered_stations = []
+        reachable_count = 0
+        on_route_count = 0
+        
         for station in stations:
             station_coords = (station['latitude'], station['longitude'])
-            station['_distance_from_origin'] = calculate_distance_km(origin_coords, station_coords)
+            
+            # Check if station is on the route
+            deviation = distance_from_line(station_coords, origin_coords, destination_coords)
+            
+            # Check if station is reachable with current battery
+            distance_from_origin = calculate_distance_km(origin_coords, station_coords)
+            
+            if deviation <= max_deviation_km:
+                on_route_count += 1
+            
+            if distance_from_origin <= current_range_km:
+                reachable_count += 1
+            
+            if deviation <= max_deviation_km and distance_from_origin <= current_range_km:
+                station['_distance_from_origin'] = distance_from_origin
+                station['_deviation_from_route'] = deviation
+                filtered_stations.append(station)
         
-        stations.sort(key=lambda s: s['_distance_from_origin'])
+        print(f"   Stations on route (within {max_deviation_km}km): {on_route_count}")
+        print(f"   Stations reachable (within {current_range_km:.0f}km): {reachable_count}")
+        print(f"   Stations matching both criteria: {len(filtered_stations)}")
         
-        # Remove temporary distance field and limit results
-        for station in stations:
+        # Sort by distance from origin (order along the route)
+        filtered_stations.sort(key=lambda s: s['_distance_from_origin'])
+        
+        # Remove temporary fields and limit results
+        for station in filtered_stations:
             station.pop('_distance_from_origin', None)
+            station.pop('_deviation_from_route', None)
         
-        return stations[:max_results]
+        return filtered_stations[:max_results]
         
     except requests.exceptions.RequestException as e:
         print(f"❌ Error querying OpenChargeMap API: {e}")
