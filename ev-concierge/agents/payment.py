@@ -5,12 +5,15 @@ Uses the isolated payment-agent tools for all payment operations
 
 import sys
 import os
+import json
+import asyncio
 
 # Add payment-agent to path for direct tool access
 payment_agent_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'payment-agent')
 sys.path.insert(0, payment_agent_path)
 
-from strands import Strands
+from strands.models import BedrockModel
+from strands import Agent
 from utils.config import AWS_REGION, BEDROCK_MODEL_ID
 
 # Import wrapped tools for Strands (with @Tool decorator)
@@ -27,8 +30,12 @@ from tools.payment_tools_wrapped import (
     get_payment_history as get_payment_history_tool
 )
 
-# Import raw tools for direct method calls (without Strands)
-from tools import payment_tools as pt
+# Import raw tools for direct method calls (without Strands) using absolute path
+import importlib.util
+payment_tools_path = os.path.join(payment_agent_path, 'tools', 'payment_tools.py')
+spec = importlib.util.spec_from_file_location("payment_tools_raw", payment_tools_path)
+pt = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(pt)
 
 
 class PaymentAgent:
@@ -38,12 +45,21 @@ class PaymentAgent:
     """
     
     def __init__(self):
-        self.strands = Strands(
+        self.model = BedrockModel(
             model_id=BEDROCK_MODEL_ID,
-            region=AWS_REGION
+            region_name=AWS_REGION,
+            temperature=0.7
         )
     
     def process_payments(self, transactions: list, wallet_id: str) -> dict:
+        """Synchronous wrapper for async process_payments"""
+        if not transactions:
+            print("⚠️  No transactions to process\n")
+            return {"payments": None, "message": "No payments to process", "tool_results": []}
+        
+        return asyncio.run(self.process_payments_async(transactions, wallet_id))
+    
+    async def process_payments_async(self, transactions: list, wallet_id: str) -> dict:
         """
         Process multiple payment transactions.
         
@@ -62,10 +78,6 @@ class PaymentAgent:
             print(f"   {i}. ${txn.get('amount', 0):.2f} to {txn.get('merchant', 'Unknown')}")
         print(f"👛 Wallet ID: {wallet_id}")
         print("="*70 + "\n")
-        
-        if not transactions:
-            print("⚠️  No transactions to process\n")
-            return {"payments": None, "message": "No payments to process", "tool_results": []}
         
         system_prompt = """You are a payment specialist. Process all transactions securely 
 and provide a summary. Use the available payment tools to:
@@ -96,64 +108,92 @@ Process all payments and provide confirmation with transaction IDs."""
             print(f"   - {tool.name}")
         print()
         
-        response = self.strands.run(
+        # Create agent with tools
+        agent = Agent(
+            model=self.model,
             system_prompt=system_prompt,
-            user_prompt=user_prompt,
-            tools=available_tools,
-            max_iterations=10
+            tools=available_tools
         )
+        
+        # Stream response and collect results
+        response_text = ""
+        tool_results = []
+        
+        try:
+            async for event in agent.stream_async(user_prompt):
+                if isinstance(event, dict):
+                    if 'data' in event:
+                        response_text += str(event['data'])
+                    
+                    # Extract tool results from message
+                    if 'message' in event:
+                        message = event['message']
+                        if isinstance(message, dict) and 'content' in message:
+                            for content_block in message['content']:
+                                if isinstance(content_block, dict) and 'toolResult' in content_block:
+                                    tool_result = content_block['toolResult']
+                                    if 'content' in tool_result:
+                                        for content_item in tool_result['content']:
+                                            if 'text' in content_item:
+                                                try:
+                                                    result_json = json.loads(content_item['text'])
+                                                    tool_results.append(result_json)
+                                                except:
+                                                    pass
+        except Exception as e:
+            response_text = f"Error: {str(e)}"
         
         # Log the results
         print("\n" + "="*70)
         print("💳 PAYMENT AGENT RESULTS")
         print("="*70)
-        print(f"🔧 Tools called: {len(response.tool_calls)}")
+        print(f"🔧 Tools called: {len(tool_results)}")
         
         total_charged = 0
         payment_count = 0
         
-        for call in response.tool_calls:
-            print(f"\n   📞 {call.tool_name}:")
-            
-            # Extract payment info from results
-            if call.tool_name == 'process_batch_payments' and isinstance(call.result, dict):
-                successful = call.result.get('successful', [])
-                failed = call.result.get('failed', [])
+        for result in tool_results:
+            if isinstance(result, dict):
+                # Check for batch payment results
+                if 'successful' in result:
+                    successful = result.get('successful', [])
+                    failed = result.get('failed', [])
+                    
+                    print(f"\n   📞 process_batch_payments:")
+                    print(f"      ✅ Successful: {len(successful)}")
+                    print(f"      ❌ Failed: {len(failed)}")
+                    
+                    for payment in successful:
+                        if isinstance(payment, dict):
+                            amount = payment.get('amount', 0)
+                            merchant = payment.get('merchant', 'Unknown')
+                            txn_id = payment.get('transaction_id', 'N/A')
+                            total_charged += amount
+                            payment_count += 1
+                            print(f"         💰 ${amount:.2f} to {merchant} ({txn_id})")
                 
-                print(f"      ✅ Successful: {len(successful)}")
-                print(f"      ❌ Failed: {len(failed)}")
+                # Check for wallet validation
+                elif 'valid' in result and 'balance' in result:
+                    print(f"\n   📞 validate_wallet:")
+                    print(f"      Valid: {result.get('valid')}, Balance: ${result.get('balance', 0):.2f}")
                 
-                for payment in successful:
-                    if isinstance(payment, dict):
-                        amount = payment.get('amount', 0)
-                        merchant = payment.get('merchant', 'Unknown')
-                        txn_id = payment.get('transaction_id', 'N/A')
-                        total_charged += amount
-                        payment_count += 1
-                        print(f"         💰 ${amount:.2f} to {merchant} ({txn_id})")
-            
-            elif call.tool_name == 'validate_wallet' and isinstance(call.result, dict):
-                valid = call.result.get('valid', False)
-                balance = call.result.get('balance', 0)
-                print(f"      Valid: {valid}, Balance: ${balance:.2f}")
-            
-            elif call.tool_name == 'calculate_fees' and isinstance(call.result, dict):
-                amount = call.result.get('amount', 0)
-                fee = call.result.get('fee', 0)
-                total = call.result.get('total', 0)
-                print(f"      Amount: ${amount:.2f}, Fee: ${fee:.2f}, Total: ${total:.2f}")
-            
-            elif call.tool_name == 'generate_receipt' and isinstance(call.result, dict):
-                receipt_id = call.result.get('receipt_id', 'N/A')
-                print(f"      Receipt: {receipt_id}")
+                # Check for fee calculation
+                elif 'fee' in result and 'total' in result:
+                    print(f"\n   📞 calculate_fees:")
+                    print(f"      Amount: ${result.get('amount', 0):.2f}, Fee: ${result.get('fee', 0):.2f}, Total: ${result.get('total', 0):.2f}")
+                
+                # Check for receipt
+                elif 'receipt_id' in result:
+                    print(f"\n   📞 generate_receipt:")
+                    print(f"      Receipt: {result.get('receipt_id')}")
         
         print(f"\n💵 TOTAL CHARGED: ${total_charged:.2f}")
         print(f"📊 PAYMENTS PROCESSED: {payment_count}")
         print("="*70 + "\n")
         
         return {
-            "payments": response.final_response,
-            "tool_results": [c.result for c in response.tool_calls] if response.tool_calls else []
+            "payments": response_text,
+            "tool_results": tool_results
         }
     
     def process_single_payment(self, amount: float, merchant: str, wallet_id: str, 

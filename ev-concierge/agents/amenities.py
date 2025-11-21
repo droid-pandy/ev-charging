@@ -1,16 +1,20 @@
-from strands import Strands
+from strands.models import BedrockModel
+from strands import Agent
 from utils.config import AWS_REGION, BEDROCK_MODEL_ID
 from tools.amenities_tools import check_nearby_amenities, get_restaurant_menu, place_food_order
+import json
+import asyncio
 
 class AmenitiesAgent:
     def __init__(self):
-        self.strands = Strands(
+        self.model = BedrockModel(
             model_id=BEDROCK_MODEL_ID,
-            region=AWS_REGION
+            region_name=AWS_REGION,
+            temperature=0.7
         )
     
     def order_amenities(self, location: str, user_prefs: dict, charging_duration_min: int) -> dict:
-        # Check if auto-order is disabled
+        """Synchronous wrapper for async order_amenities"""
         if not user_prefs.get('auto_order_coffee'):
             print("\n⏭️  Amenities: Auto-order disabled by user")
             return {"order": None, "message": "Auto-order disabled", "tool_results": []}
@@ -23,6 +27,9 @@ class AmenitiesAgent:
             print("\n⏭️  Amenities: No food or drink preferences set (both are 'None')")
             return {"order": None, "message": "No food or drink preferences", "tool_results": []}
         
+        return asyncio.run(self.order_amenities_async(location, user_prefs, charging_duration_min))
+    
+    async def order_amenities_async(self, location: str, user_prefs: dict, charging_duration_min: int) -> dict:
         system_prompt = """You are an amenities specialist. Check what's available and 
 pre-order based on user preferences and charging duration. ONLY order items that the user 
 has specified in their preferences. If they don't want drinks or food, don't order them."""
@@ -50,14 +57,40 @@ User Preferences:"""
         
         print(f"\n🍽️  Amenities Agent: Ordering {', '.join(items_to_order)}")
         
-        response = self.strands.run(
+        agent = Agent(
+            model=self.model,
             system_prompt=system_prompt,
-            user_prompt=user_prompt,
-            tools=[check_nearby_amenities, get_restaurant_menu, place_food_order],
-            max_iterations=4
+            tools=[check_nearby_amenities, get_restaurant_menu, place_food_order]
         )
         
+        response_text = ""
+        tool_results = []
+        
+        try:
+            async for event in agent.stream_async(user_prompt):
+                if isinstance(event, dict):
+                    if 'data' in event:
+                        response_text += str(event['data'])
+                    
+                    # Extract tool results from message
+                    if 'message' in event:
+                        message = event['message']
+                        if isinstance(message, dict) and 'content' in message:
+                            for content_block in message['content']:
+                                if isinstance(content_block, dict) and 'toolResult' in content_block:
+                                    tool_result = content_block['toolResult']
+                                    if 'content' in tool_result:
+                                        for content_item in tool_result['content']:
+                                            if 'text' in content_item:
+                                                try:
+                                                    result_json = json.loads(content_item['text'])
+                                                    tool_results.append(result_json)
+                                                except:
+                                                    pass
+        except Exception as e:
+            response_text = f"Error: {str(e)}"
+        
         return {
-            "order": response.final_response,
-            "tool_results": [c.result for c in response.tool_calls] if response.tool_calls else []
+            "order": response_text,
+            "tool_results": tool_results
         }

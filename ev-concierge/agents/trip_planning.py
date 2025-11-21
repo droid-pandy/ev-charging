@@ -1,15 +1,23 @@
-from strands import Strands
+from strands.models import BedrockModel
+from strands import Agent
 from utils.config import AWS_REGION, BEDROCK_MODEL_ID
 from tools.route_tools import calculate_energy_needs, get_route_info
+import json
+import asyncio
 
 class TripPlanningAgent:
     def __init__(self):
-        self.strands = Strands(
+        self.model = BedrockModel(
             model_id=BEDROCK_MODEL_ID,
-            region=AWS_REGION
+            region_name=AWS_REGION,
+            temperature=0.7
         )
     
     def analyze(self, vehicle_data: dict, trip_data: dict) -> dict:
+        """Synchronous wrapper for async analyze"""
+        return asyncio.run(self.analyze_async(vehicle_data, trip_data))
+    
+    async def analyze_async(self, vehicle_data: dict, trip_data: dict) -> dict:
         system_prompt = """You are a trip planning specialist for EVs.
 
 You have access to tools that you MUST use. Never make calculations yourself.
@@ -32,23 +40,50 @@ Trip Information:
 Use the calculate_energy_needs tool to analyze if charging is needed for this trip.
 Call it with: battery_percent={vehicle_data['battery_percent']}, trip_distance_miles={trip_data['distance_miles']}, vehicle_range_miles={vehicle_data['range_miles']}"""
         
-        response = self.strands.run(
+        # Create agent with tools
+        agent = Agent(
+            model=self.model,
             system_prompt=system_prompt,
-            user_prompt=user_prompt,
-            tools=[calculate_energy_needs, get_route_info],
-            max_iterations=3
+            tools=[calculate_energy_needs, get_route_info]
         )
         
-        # Debug: Print tool calls
+        # Stream response and collect results
+        response_text = ""
+        tool_results = []
+        
         print(f"\n🔍 DEBUG - Trip Planning Agent:")
-        print(f"   Tool calls made: {len(response.tool_calls)}")
-        if response.tool_calls:
-            for call in response.tool_calls:
-                print(f"   - {call.tool_name}: {call.result}")
-        else:
-            print(f"   ⚠️  No tools were called!")
+        
+        try:
+            async for event in agent.stream_async(user_prompt):
+                # Extract text from events
+                if isinstance(event, dict):
+                    if 'data' in event:
+                        response_text += str(event['data'])
+                    
+                    # Look for tool results in the message
+                    if 'message' in event:
+                        message = event['message']
+                        if isinstance(message, dict) and 'content' in message:
+                            for content_block in message['content']:
+                                if isinstance(content_block, dict) and 'toolResult' in content_block:
+                                    tool_result = content_block['toolResult']
+                                    if 'content' in tool_result:
+                                        for content_item in tool_result['content']:
+                                            if 'text' in content_item:
+                                                try:
+                                                    result_json = json.loads(content_item['text'])
+                                                    tool_results.append(result_json)
+                                                    print(f"   - Tool result: {result_json}")
+                                                except:
+                                                    pass
+            
+            print(f"   Tool calls made: {len(tool_results)}")
+            
+        except Exception as e:
+            print(f"   ⚠️  Error: {str(e)}")
+            response_text = f"Error: {str(e)}"
         
         return {
-            "analysis": response.final_response,
-            "tool_results": [c.result for c in response.tool_calls] if response.tool_calls else []
+            "analysis": response_text,
+            "tool_results": tool_results
         }
