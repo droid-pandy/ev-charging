@@ -30,6 +30,14 @@ class AmenitiesAgent:
         return asyncio.run(self.order_amenities_async(location, user_prefs, charging_duration_min))
     
     async def order_amenities_async(self, location: str, user_prefs: dict, charging_duration_min: int) -> dict:
+        print(f"🍽️  Amenities Agent: Starting async order_amenities...")
+        print(f"   Location: {location}")
+        print(f"   Duration: {charging_duration_min} min")
+        
+        # Extract preferences
+        favorite_drink = user_prefs.get('favorite_drink', 'None')
+        favorite_food = user_prefs.get('favorite_food', 'None')
+        
         system_prompt = """You are an amenities specialist. Check what's available and 
 pre-order based on user preferences and charging duration. ONLY order items that the user 
 has specified in their preferences. If they don't want drinks or food, don't order them."""
@@ -66,6 +74,8 @@ User Preferences:"""
         response_text = ""
         tool_results = []
         
+        print(f"🍽️  Amenities Agent: Starting Bedrock API stream...")
+        
         try:
             async for event in agent.stream_async(user_prompt):
                 if isinstance(event, dict):
@@ -88,7 +98,12 @@ User Preferences:"""
                                                 except:
                                                     pass
         except Exception as e:
+            print(f"❌ Amenities Agent Error: {e}")
+            import traceback
+            traceback.print_exc()
             response_text = f"Error: {str(e)}"
+        
+        print(f"🍽️  Amenities Agent: Completed with {len(tool_results)} tool results\n")
         
         return {
             "order": response_text,

@@ -19,11 +19,23 @@ class CoordinatorAgent:
     def orchestrate(self, vehicle_data: dict, trip_data: dict, user_prefs: dict) -> dict:
         results = {}
         
+        print("\n" + "="*70)
+        print("🎯 COORDINATOR: Starting orchestration")
+        print("="*70)
+        print(f"📍 Trip: {trip_data.get('origin')} → {trip_data.get('destination')}")
+        print(f"🔋 Battery: {vehicle_data.get('battery_percent')}%")
+        print(f"👤 Wallet: {user_prefs.get('wallet_id')}")
+        print(f"🍽️  Preferences: drink={user_prefs.get('favorite_drink')}, food={user_prefs.get('favorite_food')}")
+        print("="*70 + "\n")
+        
         # Step 1: Trip Planning
+        print("🗺️  STEP 1: Trip Planning Agent...")
         trip_plan = self.trip_agent.analyze(vehicle_data, trip_data)
+        print("✅ Trip Planning complete\n")
         results['trip_plan'] = trip_plan
         
         # Check if charging needed by parsing actual tool results
+        print("⚡ STEP 2: Checking if charging needed...")
         needs_charging = False
         energy_result = None
         
@@ -35,7 +47,15 @@ class CoordinatorAgent:
                     energy_result = tool_result
                     break
         
+        print(f"   Charging needed: {needs_charging}")
+        if energy_result:
+            print(f"   Current battery: {energy_result.get('current_battery')}%")
+            print(f"   Required battery: {energy_result.get('required_battery')}%")
+            print(f"   Deficit: {energy_result.get('deficit_percent')}%")
+        print()
+        
         if not needs_charging:
+            print("⏭️  Skipping charging, amenities, and payment\n")
             battery_pct = vehicle_data.get('battery_percent', 0)
             range_mi = vehicle_data.get('range_miles', 0)
             return {
@@ -45,7 +65,9 @@ class CoordinatorAgent:
             }
         
         # Step 2: Charging Negotiation
+        print("⚡ STEP 2: Charging Negotiation Agent...")
         charging_result = self.charging_agent.find_and_reserve(trip_plan, user_prefs)
+        print("✅ Charging negotiation complete\n")
         results['charging'] = charging_result
         
         # Check if charging was successful
@@ -101,13 +123,19 @@ class CoordinatorAgent:
             }
         
         # Step 3: Amenities
+        print("🍽️  STEP 3: Amenities Agent...")
+        print(f"   Location: {charger_location}")
+        print(f"   Duration: {charging_duration} min")
+        print(f"   Preferences: drink={user_prefs.get('favorite_drink')}, food={user_prefs.get('favorite_food')}")
         amenities_result = self.amenities_agent.order_amenities(
             charger_location, user_prefs, charging_duration
         )
+        print("✅ Amenities complete\n")
         results['amenities'] = amenities_result
         
         # Step 4: Payment
-        print("\n" + "="*70)
+        print("💳 STEP 4: Payment Processing...")
+        print("="*70)
         print("🔍 COORDINATOR: Collecting payments")
         print("="*70)
         
@@ -146,6 +174,10 @@ class CoordinatorAgent:
         
         # Collect amenities payments
         print("🍽️  Collecting amenities payments...")
+        print(f"   DEBUG: amenities_result has {len(amenities_result.get('tool_results', []))} tool results")
+        for idx, r in enumerate(amenities_result.get('tool_results', [])):
+            print(f"   DEBUG: tool_result[{idx}] type={type(r)}, keys={r.keys() if isinstance(r, dict) else 'N/A'}")
+        
         amenities_payments_found = 0
         for r in amenities_result.get('tool_results', []):
             if isinstance(r, dict) and 'total_usd' in r:
@@ -164,13 +196,24 @@ class CoordinatorAgent:
         print(f"   🍽️  Amenities: {amenities_payments_found}")
         print("="*70 + "\n")
         
-        payment_result = self.payment_agent.process_payments(
-            transactions, user_prefs.get('wallet_id', 'default')
-        )
-        results['payments'] = payment_result
+        if transactions:
+            print(f"\n💳 Calling Payment Agent with {len(transactions)} transactions...")
+            payment_result = self.payment_agent.process_payments(
+                transactions, user_prefs.get('wallet_id', 'default')
+            )
+            print("✅ Payment processing complete\n")
+            results['payments'] = payment_result
+        else:
+            print("⚠️  No transactions to process\n")
         
         # Step 5: Generate Summary
+        print("📝 STEP 5: Generating summary...")
         summary = self._generate_summary(results)
+        print("✅ Summary generated\n")
+        
+        print("="*70)
+        print("🎯 COORDINATOR: Orchestration complete!")
+        print("="*70 + "\n")
         
         return {
             "summary": summary,

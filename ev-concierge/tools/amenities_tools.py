@@ -44,7 +44,7 @@ def place_food_order(restaurant: str, items: list, pickup_time: str) -> str:
         else:
             total += 6.00  # Default price
     
-    return {
+    result = {
         "order_id": f"ORD-{int(datetime.now().timestamp())}",
         "restaurant": restaurant,
         "items": items,

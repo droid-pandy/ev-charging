@@ -105,7 +105,9 @@ Process all payments and provide confirmation with transaction IDs."""
         
         print("🔧 Payment tools available:")
         for tool in available_tools:
-            print(f"   - {tool.name}")
+            # Get tool name from function name or __name__
+            tool_name = getattr(tool, '__name__', str(tool))
+            print(f"   - {tool_name}")
         print()
         
         # Create agent with tools
@@ -118,6 +120,8 @@ Process all payments and provide confirmation with transaction IDs."""
         # Stream response and collect results
         response_text = ""
         tool_results = []
+        
+        print(f"💳 Payment Agent: Starting Bedrock API stream...")
         
         try:
             async for event in agent.stream_async(user_prompt):
@@ -141,6 +145,9 @@ Process all payments and provide confirmation with transaction IDs."""
                                                 except:
                                                     pass
         except Exception as e:
+            print(f"❌ Payment Agent Error: {e}")
+            import traceback
+            traceback.print_exc()
             response_text = f"Error: {str(e)}"
         
         # Log the results
