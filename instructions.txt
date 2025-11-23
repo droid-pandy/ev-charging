@@ -1,4 +1,4 @@
-uv venv
+uv .venv
 uv init
 source .venv/bin/activate
 uv pip install -r requirements.txt

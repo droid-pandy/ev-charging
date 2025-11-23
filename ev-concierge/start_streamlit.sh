@@ -2,9 +2,10 @@
 
 echo "🚗 Starting EV Concierge Dashboard..."
 
-# Activate virtual environment if it exists
-if [ -d "venv" ]; then
-    source venv/bin/activate
+# Activate virtual environment if it exists (prefer .venv, fallback to venv)
+if [ -d ".venv" ]; then
+    echo "🔧 Using .venv virtual environment"
+    source .venv/bin/activate
 fi
 
 # Install dependencies

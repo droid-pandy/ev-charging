@@ -12,19 +12,19 @@ fi
 
 echo "✅ Python found: $(python3 --version)"
 
-# Check if virtual environment exists
-if [ ! -d "venv" ]; then
+# Check if virtual environment exists (prefer .venv, fallback to venv)
+if [ -d ".venv" ]; then
+    echo "🔧 Activating virtual environment (.venv)..."
+    source .venv/bin/activate
+else
     echo "📦 Creating virtual environment..."
-    python3 -m venv venv
+    python3 -m venv .venv
+    source .venv/bin/activate
 fi
-
-# Activate virtual environment
-echo "🔧 Activating virtual environment..."
-source venv/bin/activate
 
 # Install dependencies
 echo "📥 Installing dependencies..."
-bash install_deps.sh
+pip install -q -r requirements.txt
 
 # Check if .env exists
 if [ ! -f ".env" ]; then
@@ -46,4 +46,4 @@ echo "🚀 Starting EV Concierge..."
 echo "📱 Access the UI at: http://localhost:8501"
 echo ""
 
-streamlit run app_streamlit.py --server.port=8501 --server.address=0.0.0.0
+streamlit run app_streamlit.py --server.port=8501 --server.address=127.0.0.1

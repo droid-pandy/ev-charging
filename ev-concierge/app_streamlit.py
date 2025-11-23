@@ -36,7 +36,7 @@ with col1:
     
     # Trip Input
     with st.form("trip_form"):
-        origin = st.selectbox("Starting From", ["Los Angeles, CA", "San Francisco, CA", "San Diego, CA", "Seattle, WA", "Las Vegas, NV"])
+        origin = st.selectbox("Starting From", ["San Francisco, CA", "Los Angeles, CA", "San Diego, CA", "Seattle, WA", "Las Vegas, NV"])
         destination = st.selectbox("Destination", ["Los Angeles, CA", "San Francisco, CA", "San Diego, CA", "Seattle, WA", "Las Vegas, NV"])
         departure = st.selectbox("Departure", ["Tomorrow Morning", "Tonight", "Next Week"])
         
